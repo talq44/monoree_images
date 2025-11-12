@@ -84,8 +84,15 @@ if [[ -z "$MODEL_DATA" ]]; then
 fi
 
 # 모델 이름과 메소드를 배열에 저장
-mapfile -t MODEL_NAMES < <(echo "$MODEL_DATA" | cut -d';' -f1 | sed 's/models\///')
-mapfile -t MODEL_METHODS < <(echo "$MODEL_DATA" | cut -d';' -f2)
+MODEL_NAMES=()
+while IFS= read -r line; do
+    MODEL_NAMES+=("$line")
+done < <(echo "$MODEL_DATA" | cut -d';' -f1 | sed 's/models\///')
+
+MODEL_METHODS=()
+while IFS= read -r line; do
+    MODEL_METHODS+=("$line")
+done < <(echo "$MODEL_DATA" | cut -d';' -f2)
 
 echo -e "\n${C_CYAN}사용 가능한 이미지 생성 모델 목록:${C_RESET}"
 i=0
