@@ -1,0 +1,6 @@
+2025년 11월 12일 수요일 22시 40분 39초 KST: 'lion' - * GenerateContentRequest.generation_config.response_mime_type: allowed mimetypes are `text/plain`, `application/json`, `application/xml`, `application/yaml` and `text/x.enum`.
+2025년 11월 12일 수요일 22시 41분 39초 KST: 'tiger' - * GenerateContentRequest.generation_config.response_mime_type: allowed mimetypes are `text/plain`, `application/json`, `application/xml`, `application/yaml` and `text/x.enum`.
+2025년 11월 12일 수요일 22시 43분 06초 KST: 'lion' - models/imagen-2 is not found for API version v1beta, or is not supported for predict. Call ListModels to see the list of available models and their supported methods.
+2025년 11월 12일 수요일 22시 45분 02초 KST: 'lion' - models/gemini-2.5-flash-image is not found for API version v1beta, or is not supported for predict. Call ListModels to see the list of available models and their supported methods.
+2025년 11월 12일 수요일 22시 49분 37초 KST: 'lion' - Imagen API is only accessible to billed users at this time.
+2025년 11월 12일 수요일 22시 55분 48초 KST: 'lion' - * GenerateContentRequest.generation_config.response_mime_type: allowed mimetypes are `text/plain`, `application/json`, `application/xml`, `application/yaml` and `text/x.enum`.
