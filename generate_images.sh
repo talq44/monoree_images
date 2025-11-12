@@ -58,86 +58,133 @@ done
 read -s -p "5. Gemini API 키를 입력하세요: " GEMINI_API_KEY
 echo # 줄바꿈
 
-echo -e "\n${C_YELLOW}모든 설정이 완료되었습니다. 이미지 생성을 시작합니다.${C_RESET}"
-echo "--------------------------------------------------"
-
-# --- 핵심 실행 로직 ---
-# 총 라인 수 계산 (진행률 표시용)
-TOTAL_LINES=$(wc -l < "$INPUT_FILE")
-CURRENT_LINE=0
-ERROR_LOG_FILE="error.log"
-
 # jq 설치 확인
 if ! command -v jq &> /dev/null; then
     echo -e "${C_RED}오류: 이 스크립트를 실행하려면 'jq'가 필요합니다. 'sudo apt-get install jq' 또는 'brew install jq'로 설치해주세요.${C_RESET}"
     exit 1
 fi
 
-# 입력 파일을 한 줄씩 읽어 루프 실행
+# --- 6단계: 사용 가능한 모델 목록 조회 및 선택 ---
+echo -e "\n${C_BLUE}사용 가능한 이미지 생성 모델을 조회 중입니다...${C_RESET}"
+MODEL_LIST_JSON=$(curl -s "https://generativelanguage.googleapis.com/v1beta/models?key=$GEMINI_API_KEY")
+
+# 'predict'를 지원하거나 이름에 'image'가 포함된 모델을 필터링
+# 포맷: 모델명;지원메소드1,지원메소드2
+MODEL_DATA=$(echo "$MODEL_LIST_JSON" | jq -r '
+    .models[] | 
+    select(
+        (.name | contains("image")) or 
+        (.supportedGenerationMethods | index("predict"))
+    ) | 
+    [.name, (.supportedGenerationMethods | join(","))] | @tsv' | tr -d '"' | sed 's/\t/;/')
+
+if [[ -z "$MODEL_DATA" ]]; then
+    echo -e "${C_RED}오류: 사용 가능한 이미지 생성 모델을 찾을 수 없습니다. API 키를 확인해주세요.${C_RESET}"
+    exit 1
+fi
+
+# 모델 이름과 메소드를 배열에 저장
+mapfile -t MODEL_NAMES < <(echo "$MODEL_DATA" | cut -d';' -f1 | sed 's/models\///')
+mapfile -t MODEL_METHODS < <(echo "$MODEL_DATA" | cut -d';' -f2)
+
+echo -e "\n${C_CYAN}사용 가능한 이미지 생성 모델 목록:${C_RESET}"
+i=0
+for name in "${MODEL_NAMES[@]}"; do
+    # 유료 모델인 경우 (이름에 'imagen' 포함) 표시 추가
+    if [[ "$name" == *"imagen"* ]]; then
+        echo "$((i+1)). $name ${C_YELLOW}(유료 계정 필요)${C_RESET}"
+    else
+        echo "$((i+1)). $name"
+    fi
+    ((i++))
+done
+
+# 사용자 선택
+while true; do
+    read -p "6. 사용할 모델 번호를 선택하세요: " MODEL_CHOICE
+    if [[ "$MODEL_CHOICE" =~ ^[0-9]+$ ]] && [ "$MODEL_CHOICE" -ge 1 ] && [ "$MODEL_CHOICE" -le "${#MODEL_NAMES[@]}" ]; then
+        SELECTED_MODEL_NAME=${MODEL_NAMES[$((MODEL_CHOICE-1))]}
+        SELECTED_MODEL_METHOD_LIST=${MODEL_METHODS[$((MODEL_CHOICE-1))]}
+        break
+    else
+        echo -e "${C_RED}오류: 1부터 ${#MODEL_NAMES[@]} 사이의 숫자를 입력해주세요.${C_RESET}"
+    fi
+done
+
+echo -e "${C_GREEN}선택된 모델: $SELECTED_MODEL_NAME${C_RESET}"
+echo -e "\n${C_YELLOW}모든 설정이 완료되었습니다. 이미지 생성을 시작합니다.${C_RESET}"
+echo "--------------------------------------------------"
+
+# --- 핵심 실행 로직 ---
+TOTAL_LINES=$(wc -l < "$INPUT_FILE")
+CURRENT_LINE=0
+ERROR_LOG_FILE="error.log"
+
 while IFS= read -r id || [[ -n "$id" ]]; do
-    # 공백 라인 건너뛰기
     if [[ -z "$id" ]]; then
         continue
     fi
 
     ((CURRENT_LINE++))
 
-    # 4.3. 파일 이름 정제 (공백 및 특수문자를 '_'로 변경)
     SAFE_ID=$(echo "$id" | tr -s ' /' '_')
     OUTPUT_FILENAME="$OUTPUT_DIR/$SAFE_ID.$IMAGE_EXT"
 
-    # 4.4. 재시작 기능: 이미 파일이 존재하면 건너뛰기
     if [ -f "$OUTPUT_FILENAME" ]; then
         echo -e "${C_YELLOW}[$CURRENT_LINE/$TOTAL_LINES] '$id' -> 이미 존재하므로 건너뜁니다.${C_RESET}"
         continue
     fi
 
-    # 4.2. 진행 상황 로그 출력
     echo -e "${C_BLUE}[$CURRENT_LINE/$TOTAL_LINES] '$id' 이미지 생성 중...${C_RESET}"
 
-    # 4. 프롬프트 생성
     FINAL_PROMPT="${PROMPT_TEMPLATE//\{id\}/$id}"
 
-    # API 호출을 위한 JSON 페이로드 생성 (Imagen-2 :predict 형식)
-    JSON_PAYLOAD=$(jq -n \
-                  --arg prompt "$FINAL_PROMPT" \
-                  '{
-                    "instances": [
-                      {
-                        "prompt": $prompt
-                      }
-                    ],
-                    "parameters": {
-                      "sampleCount": 1
-                    }
-                  }')
+    # 선택된 모델의 지원 메소드에 따라 API 호출 분기
+    if [[ "$SELECTED_MODEL_METHOD_LIST" == *"predict"* ]]; then
+        # --- 'predict' 방식 API 호출 ---
+        API_ENDPOINT="https://generativelanguage.googleapis.com/v1beta/models/$SELECTED_MODEL_NAME:predict"
+        JSON_PAYLOAD=$(jq -n --arg prompt "$FINAL_PROMPT" \
+                      '{
+                        "instances": [{"prompt": $prompt}],
+                        "parameters": {"sampleCount": 1}
+                      }')
+        
+        API_RESPONSE=$(curl -s -X POST \
+            -H "x-goog-api-key: $GEMINI_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$JSON_PAYLOAD" \
+            "$API_ENDPOINT")
 
-    # Gemini API 호출 (Imagen-2 모델)
-    API_ENDPOINT="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:predict"
-    
-    API_RESPONSE=$(curl -s -X POST \
-        -H "x-goog-api-key: $GEMINI_API_KEY" \
-        -H "Content-Type: application/json" \
-        -d "$JSON_PAYLOAD" \
-        "$API_ENDPOINT")
+        BASE64_DATA=$(echo "$API_RESPONSE" | jq -r '.predictions[0].bytesBase64Encoded')
 
-    # 4.3. 오류 처리 및 응답 파싱
-    # jq를 사용하여 base64 인코딩된 이미지 데이터 추출
-    # Imagen :predict 응답 형식: { "predictions": [ { "bytesBase64Encoded": "..." } ] }
-    BASE64_DATA=$(echo "$API_RESPONSE" | jq -r '.predictions[0].bytesBase64Encoded')
+    else
+        # --- 'generateContent' 방식 API 호출 ---
+        API_ENDPOINT="https://generativelanguage.googleapis.com/v1beta/models/$SELECTED_MODEL_NAME:generateContent?key=$GEMINI_API_KEY"
+        JSON_PAYLOAD=$(jq -n --arg prompt "$FINAL_PROMPT" --arg format "$IMAGE_EXT" \
+                      '{
+                        "contents": [{"parts": [{"text": $prompt}]}],
+                        "generationConfig": {"responseMimeType": "image/'$IMAGE_EXT'"}
+                      }')
 
+        API_RESPONSE=$(curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -d "$JSON_PAYLOAD" \
+            "$API_ENDPOINT")
+
+        BASE64_DATA=$(echo "$API_RESPONSE" | jq -r '.candidates[0].content.parts[0].inlineData.data')
+    fi
+
+    # --- 공통 오류 처리 및 파일 저장 ---
     if [[ -z "$BASE64_DATA" || "$BASE64_DATA" == "null" ]]; then
         ERROR_MESSAGE=$(echo "$API_RESPONSE" | jq -r '.error.message')
         echo -e "${C_RED}오류: '$id' 이미지 생성 실패. API 응답: ${ERROR_MESSAGE:-"알 수 없는 오류"}${C_RESET}"
         echo "$(date): '$id' - ${ERROR_MESSAGE:-$API_RESPONSE}" >> "$ERROR_LOG_FILE"
         
-        # 다음 작업을 위해 1분 대기
         echo "1분 후 다음 작업을 시작합니다..."
         sleep 60
         continue
     fi
 
-    # base64 데이터를 디코딩하여 파일로 저장
     echo "$BASE64_DATA" | base64 --decode > "$OUTPUT_FILENAME"
 
     if [ $? -eq 0 ]; then
@@ -147,7 +194,6 @@ while IFS= read -r id || [[ -n "$id" ]]; do
         echo "$(date): '$id' - 파일 저장 실패" >> "$ERROR_LOG_FILE"
     fi
 
-    # 3. API 제한을 피하기 위한 1분 딜레이
     if [ "$CURRENT_LINE" -lt "$TOTAL_LINES" ]; then
         echo "1분 후 다음 작업을 시작합니다..."
         sleep 60
