@@ -54,9 +54,26 @@ while true; do
     fi
 done
 
-# --- 5단계: Gemini API 토큰 입력 ---
-read -s -p "5. Gemini API 키를 입력하세요: " GEMINI_API_KEY
-echo # 줄바꿈
+# --- 5단계: 이미지 생성 서비스 선택 ---
+SERVICE=""
+while true; do
+    read -p "5. 사용할 이미지 생성 서비스를 선택하세요 (1: Gemini, 2: GPT): " SERVICE_CHOICE
+    case $SERVICE_CHOICE in
+        1) SERVICE="gemini"; SERVICE_LABEL="Gemini"; break;;
+        2) SERVICE="gpt"; SERVICE_LABEL="GPT"; break;;
+        *) echo -e "${C_RED}오류: 1 또는 2 중에서 선택해야 합니다.${C_RESET}";;
+    esac
+done
+echo -e "${C_GREEN}선택된 서비스: $SERVICE_LABEL${C_RESET}"
+
+# --- 6단계: 서비스별 API 키 입력 ---
+if [ "$SERVICE" == "gemini" ]; then
+    read -s -p "6. Gemini API 키를 입력하세요: " GEMINI_API_KEY
+    echo
+else
+    read -s -p "6. OpenAI API 키를 입력하세요: " OPENAI_API_KEY
+    echo
+fi
 
 # jq 설치 확인
 if ! command -v jq &> /dev/null; then
@@ -64,61 +81,96 @@ if ! command -v jq &> /dev/null; then
     exit 1
 fi
 
-# --- 6단계: 사용 가능한 모델 목록 조회 및 선택 ---
-echo -e "\n${C_BLUE}사용 가능한 이미지 생성 모델을 조회 중입니다...${C_RESET}"
-MODEL_LIST_JSON=$(curl -s "https://generativelanguage.googleapis.com/v1beta/models?key=$GEMINI_API_KEY")
+# --- 서비스별 추가 설정 ---
+if [ "$SERVICE" == "gemini" ]; then
+    echo -e "\n${C_BLUE}사용 가능한 Gemini 이미지 생성 모델을 조회 중입니다...${C_RESET}"
+    MODEL_LIST_JSON=$(curl -s "https://generativelanguage.googleapis.com/v1beta/models?key=$GEMINI_API_KEY")
 
-# 'predict'를 지원하거나 이름에 'image'가 포함된 모델을 필터링
-# 포맷: 모델명;지원메소드1,지원메소드2
-MODEL_DATA=$(echo "$MODEL_LIST_JSON" | jq -r '
-    .models[] | 
-    select(
-        (.name | contains("image")) or 
-        (.supportedGenerationMethods | index("predict"))
-    ) | 
-    [.name, (.supportedGenerationMethods | join(","))] | @tsv' | tr -d '"' | sed 's/\t/;/')
+    # 'predict'를 지원하거나 이름에 'image'가 포함된 모델을 필터링
+    # 포맷: 모델명;지원메소드1,지원메소드2
+    MODEL_DATA=$(echo "$MODEL_LIST_JSON" | jq -r '
+        .models[] | 
+        select(
+            (.name | contains("image")) or 
+            (.supportedGenerationMethods | index("predict"))
+        ) | 
+        [.name, (.supportedGenerationMethods | join(","))] | @tsv' | tr -d '"' | sed 's/\t/;/')
 
-if [[ -z "$MODEL_DATA" ]]; then
-    echo -e "${C_RED}오류: 사용 가능한 이미지 생성 모델을 찾을 수 없습니다. API 키를 확인해주세요.${C_RESET}"
-    exit 1
+    if [[ -z "$MODEL_DATA" ]]; then
+        echo -e "${C_RED}오류: 사용 가능한 이미지 생성 모델을 찾을 수 없습니다. API 키를 확인해주세요.${C_RESET}"
+        exit 1
+    fi
+
+    # 모델 이름과 메소드를 배열에 저장
+    MODEL_NAMES=()
+    while IFS= read -r line; do
+        MODEL_NAMES+=("$line")
+    done < <(echo "$MODEL_DATA" | cut -d';' -f1 | sed 's/models\///')
+
+    MODEL_METHODS=()
+    while IFS= read -r line; do
+        MODEL_METHODS+=("$line")
+    done < <(echo "$MODEL_DATA" | cut -d';' -f2)
+
+    echo -e "\n${C_CYAN}사용 가능한 이미지 생성 모델 목록:${C_RESET}"
+    i=0
+    for name in "${MODEL_NAMES[@]}"; do
+        # 유료 모델인 경우 (이름에 'imagen' 포함) 표시 추가
+        if [[ "$name" == *"imagen"* ]]; then
+            echo "$((i+1)). $name ${C_YELLOW}(유료 계정 필요)${C_RESET}"
+        else
+            echo "$((i+1)). $name"
+        fi
+        ((i++))
+    done
+
+    # 사용자 선택
+    while true; do
+        read -p "7. 사용할 Gemini 모델 번호를 선택하세요: " MODEL_CHOICE
+        if [[ "$MODEL_CHOICE" =~ ^[0-9]+$ ]] && [ "$MODEL_CHOICE" -ge 1 ] && [ "$MODEL_CHOICE" -le "${#MODEL_NAMES[@]}" ]; then
+            SELECTED_MODEL_NAME=${MODEL_NAMES[$((MODEL_CHOICE-1))]}
+            SELECTED_MODEL_METHOD_LIST=${MODEL_METHODS[$((MODEL_CHOICE-1))]}
+            break
+        else
+            echo -e "${C_RED}오류: 1부터 ${#MODEL_NAMES[@]} 사이의 숫자를 입력해주세요.${C_RESET}"
+        fi
+    done
+
+    echo -e "${C_GREEN}선택된 모델: $SELECTED_MODEL_NAME${C_RESET}"
+else
+    echo -e "\n${C_CYAN}GPT 이미지 모델 선택:${C_RESET}"
+    GPT_MODELS=("gpt-image-1" "dall-e-3")
+    for idx in "${!GPT_MODELS[@]}"; do
+        echo "$((idx+1)). ${GPT_MODELS[$idx]}"
+    done
+
+    while true; do
+        read -p "7. 사용할 GPT 이미지 모델 번호를 선택하세요: " GPT_MODEL_CHOICE
+        if [[ "$GPT_MODEL_CHOICE" =~ ^[0-9]+$ ]] && [ "$GPT_MODEL_CHOICE" -ge 1 ] && [ "$GPT_MODEL_CHOICE" -le "${#GPT_MODELS[@]}" ]; then
+            GPT_MODEL=${GPT_MODELS[$((GPT_MODEL_CHOICE-1))]}
+            break
+        else
+            echo -e "${C_RED}오류: 1부터 ${#GPT_MODELS[@]} 사이의 숫자를 입력해주세요.${C_RESET}"
+        fi
+    done
+
+    echo -e "\n${C_CYAN}GPT 이미지 해상도 선택:${C_RESET}"
+    echo "1. 1024x1024"
+    echo "2. 512x512"
+    echo "3. 256x256"
+    while true; do
+        read -p "8. 원하는 해상도 번호를 선택하세요: " GPT_SIZE_CHOICE
+        case $GPT_SIZE_CHOICE in
+            1) GPT_IMAGE_SIZE="1024x1024"; break;;
+            2) GPT_IMAGE_SIZE="512x512"; break;;
+            3) GPT_IMAGE_SIZE="256x256"; break;;
+            *) echo -e "${C_RED}오류: 1, 2, 3 중에서 선택해야 합니다.${C_RESET}";;
+        esac
+    done
+
+    echo -e "${C_GREEN}선택된 GPT 모델: $GPT_MODEL (${GPT_IMAGE_SIZE})${C_RESET}"
 fi
 
-# 모델 이름과 메소드를 배열에 저장
-MODEL_NAMES=()
-while IFS= read -r line; do
-    MODEL_NAMES+=("$line")
-done < <(echo "$MODEL_DATA" | cut -d';' -f1 | sed 's/models\///')
-
-MODEL_METHODS=()
-while IFS= read -r line; do
-    MODEL_METHODS+=("$line")
-done < <(echo "$MODEL_DATA" | cut -d';' -f2)
-
-echo -e "\n${C_CYAN}사용 가능한 이미지 생성 모델 목록:${C_RESET}"
-i=0
-for name in "${MODEL_NAMES[@]}"; do
-    # 유료 모델인 경우 (이름에 'imagen' 포함) 표시 추가
-    if [[ "$name" == *"imagen"* ]]; then
-        echo "$((i+1)). $name ${C_YELLOW}(유료 계정 필요)${C_RESET}"
-    else
-        echo "$((i+1)). $name"
-    fi
-    ((i++))
-done
-
-# 사용자 선택
-while true; do
-    read -p "6. 사용할 모델 번호를 선택하세요: " MODEL_CHOICE
-    if [[ "$MODEL_CHOICE" =~ ^[0-9]+$ ]] && [ "$MODEL_CHOICE" -ge 1 ] && [ "$MODEL_CHOICE" -le "${#MODEL_NAMES[@]}" ]; then
-        SELECTED_MODEL_NAME=${MODEL_NAMES[$((MODEL_CHOICE-1))]}
-        SELECTED_MODEL_METHOD_LIST=${MODEL_METHODS[$((MODEL_CHOICE-1))]}
-        break
-    else
-        echo -e "${C_RED}오류: 1부터 ${#MODEL_NAMES[@]} 사이의 숫자를 입력해주세요.${C_RESET}"
-    fi
-done
-
-echo -e "${C_GREEN}선택된 모델: $SELECTED_MODEL_NAME${C_RESET}"
 echo -e "\n${C_YELLOW}모든 설정이 완료되었습니다. 이미지 생성을 시작합니다.${C_RESET}"
 echo "--------------------------------------------------"
 
@@ -146,43 +198,68 @@ while IFS= read -r id || [[ -n "$id" ]]; do
 
     FINAL_PROMPT="${PROMPT_TEMPLATE//\{id\}/$id}"
 
-    # 선택된 모델의 지원 메소드에 따라 API 호출 분기
-    if [[ "$SELECTED_MODEL_METHOD_LIST" == *"predict"* ]]; then
-        # --- 'predict' 방식 API 호출 ---
-        API_ENDPOINT="https://generativelanguage.googleapis.com/v1beta/models/$SELECTED_MODEL_NAME:predict"
-        JSON_PAYLOAD=$(jq -n --arg prompt "$FINAL_PROMPT" \
-                      '{
-                        "instances": [{"prompt": $prompt}],
-                        "parameters": {"sampleCount": 1}
-                      }')
-        
-        API_RESPONSE=$(curl -s -X POST \
-            -H "x-goog-api-key: $GEMINI_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "$JSON_PAYLOAD" \
-            "$API_ENDPOINT")
+    BASE64_DATA=""
+    IMAGE_URL=""
 
-        BASE64_DATA=$(echo "$API_RESPONSE" | jq -r '.predictions[0].bytesBase64Encoded')
+    if [ "$SERVICE" == "gemini" ]; then
+        # 선택된 모델의 지원 메소드에 따라 API 호출 분기
+        if [[ "$SELECTED_MODEL_METHOD_LIST" == *"predict"* ]]; then
+            # --- 'predict' 방식 API 호출 ---
+            API_ENDPOINT="https://generativelanguage.googleapis.com/v1beta/models/$SELECTED_MODEL_NAME:predict"
+            JSON_PAYLOAD=$(jq -n --arg prompt "$FINAL_PROMPT" \
+                          '{
+                            "instances": [{"prompt": $prompt}],
+                            "parameters": {"sampleCount": 1}
+                          }')
+            
+            API_RESPONSE=$(curl -s -X POST \
+                -H "x-goog-api-key: $GEMINI_API_KEY" \
+                -H "Content-Type: application/json" \
+                -d "$JSON_PAYLOAD" \
+                "$API_ENDPOINT")
 
+            BASE64_DATA=$(echo "$API_RESPONSE" | jq -r '.predictions[0].bytesBase64Encoded')
+
+        else
+            # --- 'generateContent' 방식 API 호출 ---
+            API_ENDPOINT="https://generativelanguage.googleapis.com/v1beta/models/$SELECTED_MODEL_NAME:generateContent?key=$GEMINI_API_KEY"
+            JSON_PAYLOAD=$(jq -n --arg prompt "$FINAL_PROMPT" --arg format "$IMAGE_EXT" \
+                          '{
+                            "contents": [{"parts": [{"text": $prompt}]}],
+                            "generationConfig": {"responseMimeType": "image/'$IMAGE_EXT'"}
+                          }')
+
+            API_RESPONSE=$(curl -s -X POST \
+                -H "Content-Type: application/json" \
+                -d "$JSON_PAYLOAD" \
+                "$API_ENDPOINT")
+
+            BASE64_DATA=$(echo "$API_RESPONSE" | jq -r '.candidates[0].content.parts[0].inlineData.data')
+        fi
     else
-        # --- 'generateContent' 방식 API 호출 ---
-        API_ENDPOINT="https://generativelanguage.googleapis.com/v1beta/models/$SELECTED_MODEL_NAME:generateContent?key=$GEMINI_API_KEY"
-        JSON_PAYLOAD=$(jq -n --arg prompt "$FINAL_PROMPT" --arg format "$IMAGE_EXT" \
+        # --- GPT 이미지 생성 API 호출 ---
+        API_ENDPOINT="https://api.openai.com/v1/images/generations"
+        JSON_PAYLOAD=$(jq -n --arg prompt "$FINAL_PROMPT" --arg model "$GPT_MODEL" --arg size "$GPT_IMAGE_SIZE" \
                       '{
-                        "contents": [{"parts": [{"text": $prompt}]}],
-                        "generationConfig": {"responseMimeType": "image/'$IMAGE_EXT'"}
+                        "model": $model,
+                        "prompt": $prompt,
+                        "size": $size
                       }')
 
         API_RESPONSE=$(curl -s -X POST \
+            -H "Authorization: Bearer $OPENAI_API_KEY" \
             -H "Content-Type: application/json" \
             -d "$JSON_PAYLOAD" \
             "$API_ENDPOINT")
 
-        BASE64_DATA=$(echo "$API_RESPONSE" | jq -r '.candidates[0].content.parts[0].inlineData.data')
+        BASE64_DATA=$(echo "$API_RESPONSE" | jq -r '.data[0].b64_json // empty')
+        if [[ -z "$BASE64_DATA" || "$BASE64_DATA" == "null" ]]; then
+            IMAGE_URL=$(echo "$API_RESPONSE" | jq -r '.data[0].url // empty')
+        fi
     fi
 
     # --- 공통 오류 처리 및 파일 저장 ---
-    if [[ -z "$BASE64_DATA" || "$BASE64_DATA" == "null" ]]; then
+    if [[ -z "$BASE64_DATA" || "$BASE64_DATA" == "null" ]] && [[ -z "$IMAGE_URL" || "$IMAGE_URL" == "null" ]]; then
         ERROR_MESSAGE=$(echo "$API_RESPONSE" | jq -r '.error.message')
         echo -e "${C_RED}오류: '$id' 이미지 생성 실패. API 응답: ${ERROR_MESSAGE:-"알 수 없는 오류"}${C_RESET}"
         echo "$(date): '$id' - ${ERROR_MESSAGE:-$API_RESPONSE}" >> "$ERROR_LOG_FILE"
@@ -192,9 +269,15 @@ while IFS= read -r id || [[ -n "$id" ]]; do
         continue
     fi
 
-    echo "$BASE64_DATA" | base64 --decode > "$OUTPUT_FILENAME"
+    if [[ -n "$BASE64_DATA" && "$BASE64_DATA" != "null" ]]; then
+        echo "$BASE64_DATA" | base64 --decode > "$OUTPUT_FILENAME"
+        SAVE_EXIT_CODE=$?
+    else
+        curl -sL "$IMAGE_URL" -o "$OUTPUT_FILENAME"
+        SAVE_EXIT_CODE=$?
+    fi
 
-    if [ $? -eq 0 ]; then
+    if [ $SAVE_EXIT_CODE -eq 0 ]; then
         echo -e "${C_GREEN}성공: '$OUTPUT_FILENAME' 저장 완료.${C_RESET}"
     else
         echo -e "${C_RED}오류: '$id' 이미지를 파일로 저장하는 데 실패했습니다.${C_RESET}"
@@ -209,5 +292,3 @@ done < "$INPUT_FILE"
 
 echo "--------------------------------------------------"
 echo -e "${C_CYAN}=== 모든 작업 완료 ===${C_RESET}"
-
-
