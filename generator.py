@@ -27,6 +27,8 @@ def main():
     parser.add_argument("--format", type=str, default="png", choices=["png", "jpeg"], help="Image format for the output.")
     parser.add_argument("--prompt_template", type=str, required=True, help="Prompt template with '{id}' as a placeholder.")
     parser.add_argument("--model_id", type=str, default="runwayml/stable-diffusion-v1-5", help="Hugging Face model ID for the diffusion model.")
+    parser.add_argument("--width", type=int, default=512, help="The width in pixels of the generated image.")
+    parser.add_argument("--height", type=int, default=512, help="The height in pixels of the generated image.")
     parser.add_argument("--sleep_time", type=int, default=3, help="Cooldown time in seconds between image generations.")
     
     args = parser.parse_args()
@@ -82,7 +84,7 @@ def main():
         try:
             # --- Inference ---
             with torch.no_grad():
-                image = pipe(prompt).images[0]
+                image = pipe(prompt, width=args.width, height=args.height).images[0]
 
             # --- NSFW Check (basic) ---
             # The pipeline might return an image that is all black if the NSFW filter is triggered.
@@ -90,7 +92,7 @@ def main():
             if image.getbbox() is None:
                  tqdm.write(f"❌ NSFW content detected for '{item}'. Saving a placeholder and skipping.")
                  # Create a black image as a placeholder
-                 black_image = Image.new('RGB', (512, 512), color='black')
+                 black_image = Image.new('RGB', (args.width, args.height), color='black')
                  black_image.save(output_filepath)
                  continue
 

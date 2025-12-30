@@ -65,6 +65,21 @@ while true; do
     esac
 done
 
+# --- 3.1단계: 이미지 크기 선택 ---
+WIDTH=512 # 기본값
+HEIGHT=512 # 기본값
+while true; do
+    read -p "3.1. 이미지 크기를 선택하세요 (1: 256x256, 2: 512x512, 3: 1024x1024) [기본: 2]: " SIZE_CHOICE
+    SIZE_CHOICE=${SIZE_CHOICE:-2}
+    case $SIZE_CHOICE in
+        1) WIDTH=256; HEIGHT=256; break;;
+        2) WIDTH=512; HEIGHT=512; break;;
+        3) WIDTH=1024; HEIGHT=1024; break;;
+        *) echo -e "${C_RED}오류: 1, 2, 3 중에서 선택하세요.${C_RESET}";;
+    esac
+done
+echo -e "${C_GREEN}이미지 크기: ${WIDTH}x${HEIGHT}${C_RESET}"
+
 # --- 4단계: 프롬프트 템플릿 입력 ---
 while true; do
     read -p "4. 프롬프트 템플릿을 입력하세요 ('{id}' 포함 필수): " PROMPT_TEMPLATE
@@ -109,6 +124,7 @@ echo -e "\n${C_YELLOW}=============== 설정 확인 ===============${C_RESET}"
 echo -e "  - 키워드 파일: ${C_GREEN}${INPUT_FILE}${C_RESET}"
 echo -e "  - 출력 폴더:    ${C_GREEN}${OUTPUT_DIR}${C_RESET}"
 echo -e "  - 이미지 포맷:  ${C_GREEN}${IMAGE_FORMAT}${C_RESET}"
+echo -e "  - 이미지 크기:  ${C_GREEN}${WIDTH}x${HEIGHT}${C_RESET}"
 echo -e "  - 프롬프트:      ${C_GREEN}${PROMPT_TEMPLATE}${C_RESET}"
 echo -e "  - AI 모델:       ${C_GREEN}${MODEL_ID}${C_RESET}"
 echo -e "${C_YELLOW}========================================${C_RESET}"
@@ -121,7 +137,9 @@ python3 generator.py \
     --output_dir "$OUTPUT_DIR" \
     --format "$IMAGE_FORMAT" \
     --prompt_template "$PROMPT_TEMPLATE" \
-    --model_id "$MODEL_ID"
+    --model_id "$MODEL_ID" \
+    --width "$WIDTH" \
+    --height "$HEIGHT"
 
 if [ $? -eq 0 ]; then
     echo -e "\n${C_GREEN}✨ 모든 작업이 성공적으로 완료되었습니다! '$OUTPUT_DIR' 폴더를 확인하세요.${C_RESET}"
