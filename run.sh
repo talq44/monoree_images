@@ -98,6 +98,7 @@ MODEL_MAP=(
     "stabilityai/stable-diffusion-2-1;SD 1.5보다 개선된 모델 (SD 2.1)"
     "SG161222/Realistic_Vision_V5.1_noVAE;실사 느낌의 고품질 모델"
     "dreamlike-art/dreamlike-photoreal-2.0;사진처럼 사실적인 모델"
+    "stablediffusionapi/real-cartoon-3d;3D 만화 장난감 스타일 모델"
 )
 
 echo -e "\n${C_CYAN}5. 사용할 AI 모델을 선택하세요. (숫자만 입력)${C_RESET}"
