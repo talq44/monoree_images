@@ -24,7 +24,7 @@ def download_flags():
     parser.add_argument(
         "--width",
         type=int,
-        default=320,
+        default=640,
         help="Width of the flag image to download (e.g., 160, 320, 640)."
     )
     parser.add_argument(
